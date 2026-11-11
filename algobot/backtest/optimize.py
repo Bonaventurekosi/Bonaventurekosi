@@ -133,7 +133,7 @@ def walk_forward(cfg: Mapping[str, Any], dataset: Dataset, space: Mapping[str, A
     warmup = train_bars if warmup_bars is None else warmup_bars
     ppy = dataset.periods_per_year
     initial = float((cfg.get("backtest") or {}).get("initial_cash", 100_000.0))
-    rows, pieces, trades, fees = [], [], [], 0.0
+    rows, pieces, trades, fees, fills = [], [], [], 0.0, 0
     start = 0
     while start + train_bars < n:
         lo = start + train_bars
@@ -151,6 +151,7 @@ def walk_forward(cfg: Mapping[str, Any], dataset: Dataset, space: Mapping[str, A
         pieces.append(result.equity.pct_change().fillna(0.0))
         trades.extend(result.trades)
         fees += result.metrics.get("fees", 0.0)
+        fills += len(result.fills)
         rows.append({"test_start": dataset.timeline[lo].date(),
                      "test_end": dataset.timeline[hi - 1].date(), **params,
                      f"train_{metric}": round(float(table.loc[0, "score"]), 3),
@@ -161,5 +162,6 @@ def walk_forward(cfg: Mapping[str, Any], dataset: Dataset, space: Mapping[str, A
     equity.name = "equity"
     return WalkForwardResult(
         folds=pd.DataFrame(rows), equity=equity,
-        metrics=compute_metrics(equity, periods_per_year=ppy, trades=trades, fees=fees),
+        metrics=compute_metrics(equity, periods_per_year=ppy, trades=trades, fees=fees,
+                                fills=fills),
         periods_per_year=ppy)

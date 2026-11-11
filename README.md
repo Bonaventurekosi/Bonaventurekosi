@@ -133,6 +133,14 @@ high, low, close, volume), `yahoo`, `alpaca`, `ccxt`.
 - Strategies only receive a history object that contains nothing after "now".
   The test suite re-runs every strategy on truncated data and requires the
   results to be identical bar for bar.
+- Reported costs include commission, slippage and financing. "Round-trip
+  trades" counts positions opened and later fully closed; "Orders filled" counts
+  every execution, which is the number to watch for allocation strategies that
+  adjust positions without ever exiting.
+- A strategy holds nothing until it has enough history (up to a year for the
+  slowest ones), while the benchmark is invested from the first bar. Over short
+  tests that gap flatters the benchmark; `walkforward` compares warmed-up
+  periods only.
 - `optimize` output is fitted to the data it searched, and says so. Use
   `walkforward` for a number you can lean on, and `--bootstrap` to see how wide
   the uncertainty is.
@@ -239,8 +247,9 @@ with known structure, the no-lookahead property for all strategies, that live
 decisions match backtest decisions, and that a restarted bot matches one that
 never stopped.
 
-The Yahoo, Alpaca and CCXT adapters are tested against stand-in responses in the
-shape those services document, not against the services themselves. Run them on
-paper and check the first orders yourself before trusting them.
+The Yahoo data adapter has been run against the live service. The Alpaca and
+CCXT adapters are tested against stand-in responses in the shape those services
+document, not against the services themselves. Run them on paper and check the
+first orders yourself before trusting them.
 
 Developed and tested on Python 3.13 with pandas 3 and numpy 2.

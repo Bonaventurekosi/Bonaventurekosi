@@ -40,7 +40,9 @@ def test_costs_are_charged():
     f = res.fills[0]
     assert f.price == pytest.approx(100.2) and f.commission == pytest.approx(10 * 100.2 * 0.001)
     assert res.equity.iloc[-1] == pytest.approx(1000.0 - 10 * 0.2 - f.commission)
-    assert res.metrics["fees"] == pytest.approx(f.commission)
+    # Reported costs include the slippage paid, not just the commission.
+    assert res.metrics["fees"] == pytest.approx(f.commission + 10 * 0.2)
+    assert res.metrics["fills"] == 1 and res.metrics["trades"] == 0
 
 
 def test_short_position_profits_when_price_falls():

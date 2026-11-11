@@ -149,7 +149,9 @@ def render_report(result, title: str = "Backtest report") -> str:
         _tile("Sharpe ratio", fmt("sharpe", "num"), f"benchmark {fmt('sharpe', 'num', bm)}"),
         _tile("Max drawdown", fmt("max_drawdown", "pct"), f"benchmark {fmt('max_drawdown', 'pct', bm)}"),
         _tile("Volatility", fmt("volatility", "pct"), "annualised"),
-        _tile("Round-trip trades", fmt("trades", "int"), f"win rate {fmt('win_rate', 'pct')}"),
+        _tile("Orders filled", fmt("fills", "int"),
+              f"{fmt('trades', 'int')} round trips, win rate {fmt('win_rate', 'pct')}"
+              if m.get("trades") else "no position fully closed"),
     ])
     charts = (_chart("equity", "Account value", idx,
                      [("Strategy", "--series-1", e), ("Benchmark (equal-weight buy and hold)", "--series-2", b)],

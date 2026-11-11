@@ -30,8 +30,12 @@ def compute_metrics(
     traded_notional: float = 0.0,
     exposure: pd.Series | None = None,
     fees: float = 0.0,
+    fills: int | None = None,
     risk_free: float = 0.0,
 ) -> dict[str, float]:
+    """``fees`` is everything trading cost: commission, slippage and financing.
+    ``trades`` counts round trips (a position opened and later fully closed);
+    ``fills`` counts every executed order, including partial adjustments."""
     e = np.asarray(equity, dtype=float)
     out: dict[str, float] = {"bars": float(len(e))}
     if len(e) < 2 or e[0] <= 0:
@@ -59,6 +63,8 @@ def compute_metrics(
     out["worst_bar"] = float(rets.min())
 
     pnls = np.array([t.pnl for t in trades], dtype=float)
+    if fills is not None:
+        out["fills"] = float(fills)
     out["trades"] = float(len(pnls))
     if len(pnls):
         wins, losses = pnls[pnls > 0], pnls[pnls <= 0]
@@ -109,10 +115,11 @@ _FORMATS = [
     ("sortino", "Sortino", "num"), ("max_drawdown", "Max drawdown", "pct"),
     ("calmar", "Calmar", "num"), ("max_drawdown_bars", "Longest drawdown (bars)", "int"),
     ("var_95", "VaR 95% (per bar)", "pct"), ("cvar_95", "CVaR 95% (per bar)", "pct"),
+    ("fills", "Orders filled", "int"),
     ("trades", "Round-trip trades", "int"), ("win_rate", "Win rate", "pct"),
     ("profit_factor", "Profit factor", "num"), ("payoff_ratio", "Avg win / avg loss", "num"),
     ("turnover", "Turnover (x equity / yr)", "num"), ("avg_exposure", "Avg gross exposure", "pct"),
-    ("fees", "Costs paid", "money"),
+    ("fees", "Costs (fees + slippage)", "money"),
 ]
 
 

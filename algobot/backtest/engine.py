@@ -98,7 +98,7 @@ class Backtester:
         equity = np.empty(n)
         exposure = np.empty(n)
         weights: list[dict[str, float]] = []
-        traded = financing = 0.0
+        traded = financing = slippage = 0.0
         bankrupt = False
         end = n
 
@@ -115,10 +115,12 @@ class Backtester:
                 p = live.get(order.symbol)
                 if p is None:
                     continue  # no bar for this symbol now; it is re-decided below
-                px = costs.fill_price(float(arrays[order.symbol][1][p]), order.qty)
+                ref = float(arrays[order.symbol][1][p])
+                px = costs.fill_price(ref, order.qty)
                 pf.apply_fill(Fill(now, order.symbol, order.qty, px,
                                    costs.commission(order.qty, px), order.reason))
                 traded += abs(order.qty * px)
+                slippage += abs(order.qty) * abs(px - ref)
             pending = []
 
             # 2. The bar becomes visible.
@@ -171,7 +173,8 @@ class Backtester:
             fills=pf.fills, trades=pf.trades, risk_events=list(pipe.risk.events),
             metrics=compute_metrics(eq_s, periods_per_year=ppy, trades=pf.trades,
                                     traded_notional=traded, exposure=ex_s,
-                                    fees=pf.fees_paid + financing),
+                                    fees=pf.fees_paid + financing + slippage,
+                                    fills=len(pf.fills)),
             benchmark_metrics=compute_metrics(bench, periods_per_year=ppy),
             periods_per_year=ppy, bankrupt=bankrupt,
             final_positions=pf.quantities(),
