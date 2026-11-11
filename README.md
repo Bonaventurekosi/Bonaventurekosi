@@ -2,7 +2,7 @@
 
 A multi-strategy algorithmic trading framework in Python. One pipeline takes you
 from an idea to a backtest, a parameter search, an out-of-sample test, paper
-trading and, if you choose, a live account. Seventeen strategies ship with it,
+trading and, if you choose, a live account. Eighteen strategies ship with it,
 they can be blended into ensembles that adapt to market regime and recent
 performance, and every stage uses the same code, so what you backtest is what
 trades.
@@ -60,6 +60,7 @@ the strategies interchangeable and combinable.
 | `inverse_vol` | Allocation | Naive risk parity |
 | `buy_and_hold` | Baseline | Constant weights |
 | `ml_logistic` | Machine learning | Online logistic regression on price features, trained walk-forward |
+| `event_drift` | Event-driven | Trades the follow-through after earnings, filings or news |
 | `ensemble` | Meta | Blends any of the above (see below) |
 
 `python -m algobot strategies` lists every parameter and its default.
@@ -104,6 +105,8 @@ backtests and live.
 | `walkforward -c CFG [--jobs N]` | Refit on a window, trade the next one, repeat; reports out-of-sample only |
 | `tournament -c CFG` | Every built-in strategy on the same data, ranked |
 | `plan -c CFG [--positions P.json]` | Print the orders the bot would place now; sends nothing |
+| `events fetch -c CFG` | Collect earnings, filing and news events into a file |
+| `events study -c CFG [--report out.html]` | Measure how prices moved around those events |
 | `run -c CFG [--once] [--dry-run] [--replay N] [--live]` | Trade on a live feed (paper unless told otherwise) |
 
 Any value in a config can be searched by its dotted path, including ensemble
@@ -118,12 +121,63 @@ silently fall back to defaults. `configs/` has a working example of each setup:
 |---|---|---|
 | `demo.yaml` | Synthetic | Regime-gated adaptive ensemble, optimisation, walk-forward |
 | `etf_trend_yahoo.yaml` | Yahoo Finance | Long-only ETF trend and momentum allocation |
+| `etf_growth_yahoo.yaml` | Yahoo Finance | Higher-return, deeper-drawdown rotation into the 4 strongest ETFs |
+| `earnings_events.yaml` | Yahoo + SEC | Earnings and announcement study, and a strategy that trades it |
 | `alpaca_paper.yaml` | Alpaca | Paper trading stocks with stops and breakers |
 | `crypto_ccxt.yaml` | Any CCXT exchange | 4-hour crypto grid plus breakout, sandbox trading |
 | `csv_pairs.yaml` | Your CSV files | Pairs trading with borrow costs |
 
 Data sources: `synthetic`, `csv` (one `SYMBOL.csv` per symbol with date, open,
-high, low, close, volume), `yahoo`, `alpaca`, `ccxt`.
+high, low, close, volume), `yahoo`, `alpaca`, `ccxt`. Add `cache: data/cache` to
+a network source to reuse downloads for `cache_hours` (default 12) instead of
+fetching on every command; throttled Yahoo requests are retried automatically.
+
+## Events: earnings, filings and news
+
+Prices move on information, so the bot can collect it and measure its effect.
+
+```bash
+python -m algobot events fetch -c configs/earnings_events.yaml
+python -m algobot events study -c configs/earnings_events.yaml --report reports/events.html
+```
+
+`events fetch` gathers events into one CSV (`events.path`) from these sources:
+
+| Source | What it gives | Cost |
+|---|---|---|
+| `sec` | Every 8-K filing from the SEC's EDGAR database, timestamped to the second and classified: earnings releases, executive changes, deals, restructurings and more. Goes back decades. | Free |
+| `yahoo_news` | The latest headlines per symbol with a simple word-list sentiment score. Yahoo only serves the last few hours to days, so run it on a schedule to build history. | Free |
+| `alpaca_news` | Headlines back to 2015, same scoring. | Free Alpaca account |
+
+Any other feed works too: write a CSV with `symbol` and `time` columns (plus
+optional `kind`, `value`, `text`, `source`) and point `events.path` at it. That
+is how analyst-estimate surprises or a paid news feed plug in; put the surprise
+or sentiment in `value`.
+
+`events study` lines up each stock's return *minus the market's* around every
+event and averages across events. It reports the reaction on day 0, the drift
+over the following 5, 20 and 60 days, split by how the stock first reacted (and
+by the event's `value` when it has one), with a table for every event type.
+
+How to read it, and how not to:
+
+- **Day 0 is not tradable.** It is the first session that closes after the event
+  became public; by the time the event is known, that move has happened. Only
+  the drift afterwards can be traded, which is what `event_drift` does.
+- **Timing rule.** An event belongs to the first bar that closes at or after its
+  timestamp, so a 4:30 pm earnings release counts from the next session. The
+  strategy obeys the same rule and is tested for it.
+- **Significance.** The t-statistics treat all events on one date as a single
+  observation, so fifty headlines about one story cannot pass for fifty
+  results. Windows seen on fewer than ten dates are shown as n/a.
+- **Survivorship.** A universe of today's large companies outperformed the
+  market by construction, which lifts every group's drift. Compare groups with
+  each other (jumped versus dropped) rather than reading one row alone.
+
+The `event_drift` strategy reads the same file. On each event it follows either
+the stock's own first-day move (`signal: reaction`) or the event's `value`
+(`signal: value`) for `hold` bars. It re-reads the file when it changes, so a
+live bot picks up events collected by a scheduled `events fetch`.
 
 ## Backtest honesty
 
@@ -228,7 +282,10 @@ algobot/
   sizing.py, risk.py, portfolio.py
   backtest/      engine, metrics, optimiser, walk-forward, HTML report
   execution/     cost model, order generation, paper / Alpaca / CCXT brokers
-  data/          dataset, synthetic markets, CSV / Yahoo / Alpaca / CCXT loaders
+  data/          dataset, synthetic markets, CSV / Yahoo / Alpaca / CCXT loaders,
+                 event collectors (SEC filings, Yahoo and Alpaca headlines)
+  events.py      timestamped events and the rule for when they can be acted on
+  eventstudy.py  price reaction and drift around events; eventreport.py renders it
   live.py        polling runner with restart-safe state
   cli.py
 configs/         example configurations
@@ -247,9 +304,10 @@ with known structure, the no-lookahead property for all strategies, that live
 decisions match backtest decisions, and that a restarted bot matches one that
 never stopped.
 
-The Yahoo data adapter has been run against the live service. The Alpaca and
-CCXT adapters are tested against stand-in responses in the shape those services
-document, not against the services themselves. Run them on paper and check the
-first orders yourself before trusting them.
+The Yahoo price and headline adapters and the SEC filings adapter have been run
+against the live services. The Alpaca and CCXT adapters are tested against
+stand-in responses in the shape those services document, not against the
+services themselves. Run them on paper and check the first orders yourself
+before trusting them.
 
 Developed and tested on Python 3.13 with pandas 3 and numpy 2.

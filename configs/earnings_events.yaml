@@ -1,0 +1,48 @@
+# How do earnings and company announcements move prices, and can the bot trade it?
+#   python -m algobot events fetch -c configs/earnings_events.yaml     # collect events (free)
+#   python -m algobot events study -c configs/earnings_events.yaml --report reports/events.html
+#   python -m algobot backtest     -c configs/earnings_events.yaml --report reports/drift.html
+name: Earnings and announcements - 50 large US companies
+
+data:
+  source: yahoo
+  cache: data/cache                    # reuse downloads for 12 hours
+  range: 15y
+  interval: 1d
+  symbols: [SPY,                       # the market, used as the benchmark
+            AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, AVGO, V, MA,
+            UNH, XOM, JNJ, PG, HD, COST, WMT, KO, PEP, NFLX,
+            AMD, CRM, ORCL, ADBE, CSCO, INTC, DIS, NKE, MCD, CAT,
+            BA, CVX, LLY, MRK, ABBV, PFE, T, VZ, QCOM, TXN,
+            IBM, GE, UPS, SBUX, PYPL, LOW, HON, AXP, BLK, SPGI]
+
+events:
+  path: data/events.csv                # collected events live here (not committed)
+  sources: [sec, yahoo_news]           # sec: filings since `start`; yahoo_news: latest headlines
+  start: 2012-01-01
+  benchmark: SPY
+  kind: earnings                       # the event type the report focuses on
+  pre: 10                              # days shown before the event
+  post: 60                             # days followed after it
+  threshold: 0.02                      # a first-day move beyond 2% counts as a jump or drop
+
+strategy:
+  type: event_drift
+  params:
+    events_path: data/events.csv
+    kinds: [earnings]
+    signal: reaction                   # follow the stock's own first-day move...
+    benchmark: SPY                     # ...measured against the market
+    threshold: 0.02
+    hold: 20
+    position_size: 0.1
+    allow_short: false
+
+risk:
+  max_position_weight: 0.10
+  max_drawdown_pct: 0.20
+  drawdown_halt_bars: 40
+
+costs:
+  commission_bps: 0
+  slippage_bps: 5

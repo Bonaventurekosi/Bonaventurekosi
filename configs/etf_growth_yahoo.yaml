@@ -1,0 +1,40 @@
+# Higher-return variant of etf_trend_yahoo.yaml: holds the 4 strongest of the ten ETFs
+# instead of spreading across all of them, with no volatility throttle.
+#
+# How it was chosen: tuned only on data up to 2019, then checked once on 2020-2026.
+#                              return/yr   worst drop
+#   2012-2019 (tuning)    this    9.9%      -12.6%     buy & hold all ten: 6.7% / -14.4%
+#   2020-2026 (unseen)    this    9.0%      -22.5%     buy & hold all ten: 9.5% / -23.1%
+#                         etf_trend_yahoo.yaml on the same unseen years:   6.7% / -15.8%
+# So it earned more than the conservative config, at the price of deeper drops, and
+# did not beat simply holding everything in the unseen years.
+name: ETF growth - top-4 momentum rotation (long only)
+
+data:
+  source: yahoo
+  cache: data/cache
+  symbols: [SPY, QQQ, IWM, EFA, EEM, TLT, IEF, GLD, DBC, VNQ]
+  range: 15y
+  interval: 1d
+
+strategy:
+  type: ensemble             # the same rule at four lookbacks, so no single one is relied on
+  params:
+    children:
+      - {type: dual_momentum, params: {lookback: 63, top_k: 4, safe_asset: IEF}}
+      - {type: dual_momentum, params: {lookback: 126, top_k: 4, safe_asset: IEF}}
+      - {type: dual_momentum, params: {lookback: 189, top_k: 4, safe_asset: IEF}}
+      - {type: dual_momentum, params: {lookback: 252, top_k: 4, safe_asset: IEF}}
+
+risk:
+  long_only: true
+  max_position_weight: 1.0
+  max_drawdown_pct: 0.20     # tripped once in the unseen years, then resumed
+  drawdown_halt_bars: 40
+
+execution:
+  min_trade_weight: 0.01
+
+costs:
+  commission_bps: 0
+  slippage_bps: 3

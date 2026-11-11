@@ -8,6 +8,7 @@ runner. All timestamps are naive UTC.
 from __future__ import annotations
 
 import datetime as dt
+import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -62,8 +63,9 @@ class YahooData:
     URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
     def __init__(self, interval: str = "1d", range: str = "10y", session: Any = None,
-                 timeout: float = 20.0):
+                 timeout: float = 20.0, pause: float = 0.25, retries: int = 4):
         self.interval, self.range, self.timeout = interval, range, timeout
+        self.pause, self.retries = pause, retries
         self._session = session
 
     def _http(self):
@@ -76,15 +78,26 @@ class YahooData:
     def fetch(self, symbols: Sequence[str], bars: int | None = None) -> dict[str, pd.DataFrame]:
         out = {}
         for sym in symbols:
+            resp = self._get(sym)
+            df = self.parse(resp.json(), daily=not self.interval.endswith(("m", "h")))
+            out[sym] = df.iloc[-bars:] if bars else df
+        return out
+
+    def _get(self, sym: str):
+        """One chart request; backs off and retries when Yahoo throttles or hiccups."""
+        for attempt in range(self.retries + 1):
             resp = self._http().get(
                 self.URL.format(symbol=sym),
                 params={"interval": self.interval, "range": self.range,
                         "includeAdjustedClose": "true"},
                 timeout=self.timeout)
-            resp.raise_for_status()
-            df = self.parse(resp.json(), daily=not self.interval.endswith(("m", "h")))
-            out[sym] = df.iloc[-bars:] if bars else df
-        return out
+            if resp.status_code not in (429, 500, 502, 503, 504) or attempt == self.retries:
+                break
+            time.sleep(self.pause * 8 * 2 ** attempt)
+        resp.raise_for_status()
+        if self.pause:
+            time.sleep(self.pause)
+        return resp
 
     @staticmethod
     def parse(payload: Mapping, daily: bool = True) -> pd.DataFrame:

@@ -10,3 +10,6 @@ dist/
 # Runtime output: bot state (positions, strategy snapshots) and reports
 state/
 reports/
+
+# Downloaded market data and collected events (the top-level folder only)
+/data/

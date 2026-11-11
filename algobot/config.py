@@ -16,7 +16,7 @@ from .sizing import Sizer, SizingConfig
 from .strategies import create
 
 SECTIONS = {"name", "data", "strategy", "sizing", "risk", "execution", "costs",
-            "backtest", "optimize", "walk_forward", "live"}
+            "backtest", "optimize", "walk_forward", "live", "events"}
 
 
 def validate(cfg: Mapping[str, Any]) -> None:

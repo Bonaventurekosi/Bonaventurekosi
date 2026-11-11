@@ -5,6 +5,7 @@ name: ETF trend + dual momentum (long only)
 
 data:
   source: yahoo
+  cache: data/cache                    # reuse downloads for 12 hours
   symbols: [SPY, QQQ, IWM, EFA, EEM, TLT, IEF, GLD, DBC, VNQ]
   range: 15y
   interval: 1d

@@ -48,22 +48,30 @@ def _date_ticks(index: pd.DatetimeIndex) -> list[tuple[int, str]]:
             if index.searchsorted(m) < len(index)]
 
 
-def _chart(cid: str, title: str, index: pd.DatetimeIndex, series: list[tuple[str, str, np.ndarray]],
-           kind: str, area: bool = False) -> str:
-    """One line chart as static SVG plus the data its hover layer needs."""
-    n = len(index)
-    lo = min(float(v.min()) for _, _, v in series)
-    hi = max(float(v.max()) for _, _, v in series)
+def chart(cid: str, title: str, labels: list[str], xticks: list[tuple[int, str]],
+          series: list[tuple[str, str, np.ndarray]], kind: str, area: bool = False) -> str:
+    """One line chart as static SVG plus the data its hover layer needs.
+
+    ``labels`` name each point in the tooltip, ``xticks`` are ``(position, text)``
+    axis marks. ``kind`` picks the y axis: "money", "pct" (drawdown, zero is the
+    ceiling) or "signed" (percent around a zero line).
+    """
+    n = len(labels)
+    lo = min(float(np.nanmin(v)) for _, _, v in series)
+    hi = max(float(np.nanmax(v)) for _, _, v in series)
     pad = (hi - lo) * 0.06 or abs(hi) * 0.06 or 1.0
-    if kind == "pct":           # drawdown: zero is the ceiling
+    if kind == "pct":
         hi, lo = 0.0, lo - pad
-        ticks = _ticks(lo, hi)
-        whole = all(abs(t * 100 - round(t * 100)) < 1e-6 for t in ticks)
-        label = lambda v: "0%" if abs(v) < 1e-12 else f"{v * 100:.{0 if whole else 1}f}%"
+    elif kind == "signed":
+        lo, hi = min(lo - pad, 0.0), max(hi + pad, 0.0)
     else:
         lo, hi = lo - pad, hi + pad
-        ticks = _ticks(lo, hi)
+    ticks = _ticks(lo, hi)
+    if kind == "money":
         label = _money_axis(hi)
+    else:
+        whole = all(abs(t * 100 - round(t * 100)) < 1e-6 for t in ticks)
+        label = lambda v: "0%" if abs(v) < 1e-12 else f"{v * 100:.{0 if whole else 1}f}%"
     pw, ph = W - ML - MR, H - MT - MB
     x = lambda i: ML + pw * i / max(n - 1, 1)
     y = lambda v: MT + ph * (1.0 - (v - lo) / (hi - lo))
@@ -72,10 +80,10 @@ def _chart(cid: str, title: str, index: pd.DatetimeIndex, series: list[tuple[str
     for t in ticks:
         parts.append(f'<line class="grid" x1="{ML}" x2="{W - MR}" y1="{y(t):.1f}" y2="{y(t):.1f}"/>'
                      f'<text class="tick" x="{ML - 8}" y="{y(t) + 4:.1f}" text-anchor="end">{label(t)}</text>')
-    base = y(0.0) if kind == "pct" else H - MB
+    base = H - MB if kind == "money" else y(0.0)
     parts.append(f'<line class="axis" x1="{ML}" x2="{W - MR}" y1="{base:.1f}" y2="{base:.1f}"/>')
-    for i, text in _date_ticks(index):
-        parts.append(f'<text class="tick" x="{x(i):.1f}" y="{H - 8}" text-anchor="middle">{text}</text>')
+    for i, text in xticks:
+        parts.append(f'<text class="tick" x="{x(i):.1f}" y="{H - 8}" text-anchor="middle">{html.escape(text)}</text>')
 
     ends = []
     for name, var, values in series:
@@ -85,20 +93,19 @@ def _chart(cid: str, title: str, index: pd.DatetimeIndex, series: list[tuple[str
                          f'points="{x(0):.1f},{base:.1f} {pts} {x(n - 1):.1f},{base:.1f}"/>')
         parts.append(f'<polyline class="line" style="stroke:var({var})" points="{pts}"/>')
         ends.append((y(float(values[-1])), var, float(values[-1])))
-    # Direct end labels: skip the later series' label if it would collide.
+    # Direct end labels: skip a later series' label if it would collide.
     placed: list[float] = []
     for ey, var, value in ends:
         parts.append(f'<circle class="dot" style="fill:var({var})" cx="{x(n - 1):.1f}" cy="{ey:.1f}" r="4"/>')
         if all(abs(ey - other) >= 15 for other in placed):
-            text = f"{value * 100:.1f}%" if kind == "pct" else f"{value:,.0f}"
+            text = (f"{value:,.0f}" if kind == "money"
+                    else f"{value * 100:+.1f}%" if kind == "signed" else f"{value * 100:.1f}%")
             parts.append(f'<text class="end" x="{x(n - 1) + 9:.1f}" y="{ey + 4:.1f}">{text}</text>')
             placed.append(ey)
     parts.append(f'<line class="xh" y1="{MT}" y2="{H - MB}" visibility="hidden"/>')
     parts.append('</svg>')
 
-    stamp = "%Y-%m-%d" if index.normalize().is_unique else "%Y-%m-%d %H:%M"
-    payload = {"dates": [d.strftime(stamp) for d in index],
-               "kind": kind, "lo": lo, "hi": hi,
+    payload = {"dates": list(labels), "kind": kind, "lo": lo, "hi": hi,
                "geom": {"w": W, "h": H, "ml": ML, "mr": MR, "mt": MT, "mb": MB},
                "series": [{"label": name, "var": var, "values": [round(float(v), 6) for v in values]}
                           for name, var, values in series]}
@@ -112,13 +119,19 @@ def _chart(cid: str, title: str, index: pd.DatetimeIndex, series: list[tuple[str
             f'<script type="application/json" data-for="{cid}">{json.dumps(payload)}</script></section>')
 
 
-def _tile(label: str, value: str, note: str = "") -> str:
+def _date_chart(cid: str, title: str, index: pd.DatetimeIndex,
+                series: list[tuple[str, str, np.ndarray]], kind: str, area: bool = False) -> str:
+    stamp = "%Y-%m-%d" if index.normalize().is_unique else "%Y-%m-%d %H:%M"
+    return chart(cid, title, [d.strftime(stamp) for d in index], _date_ticks(index), series, kind, area)
+
+
+def tile(label: str, value: str, note: str = "") -> str:
     note = f'<div class="note">{html.escape(note)}</div>' if note else ""
     return (f'<div class="tile"><div class="label">{html.escape(label)}</div>'
             f'<div class="value">{html.escape(value)}</div>{note}</div>')
 
 
-def _table(headers: list[str], rows: list[list[str]], text: bool = False) -> str:
+def table(headers: list[str], rows: list[list[str]], text: bool = False) -> str:
     head = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
     body = "".join("<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in row) + "</tr>"
                    for row in rows)
@@ -144,22 +157,22 @@ def render_report(result, title: str = "Backtest report") -> str:
         return format_value(source[key], kind) if key in source else "n/a"
 
     tiles = "".join([
-        _tile("Total return", fmt("total_return", "pct"), f"benchmark {fmt('total_return', 'pct', bm)}"),
-        _tile("CAGR", fmt("cagr", "pct"), f"benchmark {fmt('cagr', 'pct', bm)}"),
-        _tile("Sharpe ratio", fmt("sharpe", "num"), f"benchmark {fmt('sharpe', 'num', bm)}"),
-        _tile("Max drawdown", fmt("max_drawdown", "pct"), f"benchmark {fmt('max_drawdown', 'pct', bm)}"),
-        _tile("Volatility", fmt("volatility", "pct"), "annualised"),
-        _tile("Orders filled", fmt("fills", "int"),
+        tile("Total return", fmt("total_return", "pct"), f"benchmark {fmt('total_return', 'pct', bm)}"),
+        tile("CAGR", fmt("cagr", "pct"), f"benchmark {fmt('cagr', 'pct', bm)}"),
+        tile("Sharpe ratio", fmt("sharpe", "num"), f"benchmark {fmt('sharpe', 'num', bm)}"),
+        tile("Max drawdown", fmt("max_drawdown", "pct"), f"benchmark {fmt('max_drawdown', 'pct', bm)}"),
+        tile("Volatility", fmt("volatility", "pct"), "annualised"),
+        tile("Orders filled", fmt("fills", "int"),
               f"{fmt('trades', 'int')} round trips, win rate {fmt('win_rate', 'pct')}"
               if m.get("trades") else "no position fully closed"),
     ])
-    charts = (_chart("equity", "Account value", idx,
+    charts = (_date_chart("equity", "Account value", idx,
                      [("Strategy", "--series-1", e), ("Benchmark (equal-weight buy and hold)", "--series-2", b)],
                      "money")
-              + _chart("drawdown", "Strategy drawdown from peak", idx,
+              + _date_chart("drawdown", "Strategy drawdown from peak", idx,
                        [("Strategy", "--series-1", dd)], "pct", area=True))
 
-    stats = _table(["Metric", "Strategy", "Benchmark"],
+    stats = table(["Metric", "Strategy", "Benchmark"],
                    [[label, format_value(m[key], kind),
                      format_value(bm[key], kind) if key in bm else ""]
                     for key, label, kind in _FORMATS if key in m])
@@ -168,26 +181,36 @@ def render_report(result, title: str = "Backtest report") -> str:
     starts = ends.shift(1)
     starts.iloc[0] = [eq.iloc[0], bench.iloc[0]]
     yearly = ends / starts - 1.0
-    years = _table(["Year", "Strategy", "Benchmark"],
+    years = table(["Year", "Strategy", "Benchmark"],
                    [[str(year), f"{row.s * 100:+.2f}%", f"{row.b * 100:+.2f}%"]
                     for year, row in yearly.iterrows()])
     monthly = pd.DataFrame({"s": eq, "b": bench, "d": drawdown(eq.to_numpy())}).groupby(
         [eq.index.year, eq.index.month]).last()
-    months = _table(["Month end", "Strategy", "Benchmark", "Drawdown"],
+    months = table(["Month end", "Strategy", "Benchmark", "Drawdown"],
                     [[f"{y}-{mo:02d}", f"{r.s:,.0f}", f"{r.b:,.0f}", f"{r.d * 100:.1f}%"]
                      for (y, mo), r in monthly.iterrows()])
     events = ""
     if result.risk_events:
         events = ('<section class="card"><h2>Risk events</h2>'
-                  + _table(["When", "Event", "Detail"],
+                  + table(["When", "Event", "Detail"],
                            [[_when(ts), kind.replace("_", " "), detail]
                             for ts, kind, detail in result.risk_events[:200]], text=True)
                   + "</section>")
     period = f"{eq.index[0].date()} to {eq.index[-1].date()} &middot; {len(eq):,} bars"
-    return (_TEMPLATE.replace("__TITLE__", html.escape(title)).replace("__PERIOD__", period)
-            .replace("__TILES__", tiles).replace("__CHARTS__", charts)
-            .replace("__STATS__", stats).replace("__YEARS__", years)
-            .replace("__MONTHS__", months).replace("__EVENTS__", events))
+    body = (f'<div class="tiles">{tiles}</div>{charts}<div class="cols">'
+            f'<section class="card"><h2>Statistics</h2>{stats}</section>'
+            f'<section class="card"><h2>Calendar-year returns</h2>{years}</section></div>{events}'
+            f'<section class="card"><details><summary>Chart data as a table (month ends)</summary>'
+            f'{months}</details></section>')
+    return page(title, period, body,
+                "Simulated results. Fills are modelled at the next bar's open with slippage and "
+                "commission; real trading will differ. Past performance does not predict future returns.")
+
+
+def page(title: str, subtitle: str, body: str, footnote: str = "") -> str:
+    """Wrap report sections in the shared page (styles, themes, chart hover)."""
+    return (_TEMPLATE.replace("__TITLE__", html.escape(title)).replace("__PERIOD__", subtitle)
+            .replace("__BODY__", body).replace("__FOOT__", html.escape(footnote)))
 
 
 def write_report(result, path: str | Path, title: str = "Backtest report") -> Path:
@@ -204,10 +227,10 @@ _TEMPLATE = """<!doctype html>
 <style>
 :root{color-scheme:light;--page:#f9f9f7;--surface-1:#fcfcfb;--text-primary:#0b0b0b;
 --text-secondary:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
---border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834}
+--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--series-3:#1baf7a}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;--page:#0d0d0d;--surface-1:#1a1a19;
 --text-primary:#f0efec;--text-secondary:#c3c2b7;--muted:#898781;--grid:#2c2c2a;--axis:#383835;
---border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926}}
+--border:rgba(255,255,255,.10);--series-1:#3987e5;--series-2:#d95926;--series-3:#199e70}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--page);color:var(--text-primary);
 font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -253,16 +276,8 @@ details summary{cursor:pointer;color:var(--text-secondary)}
 </style></head><body><main>
 <h1>__TITLE__</h1>
 <p class="sub">__PERIOD__</p>
-<div class="tiles">__TILES__</div>
-__CHARTS__
-<div class="cols">
-<section class="card"><h2>Statistics</h2>__STATS__</section>
-<section class="card"><h2>Calendar-year returns</h2>__YEARS__</section>
-</div>
-__EVENTS__
-<section class="card"><details><summary>Chart data as a table (month ends)</summary>__MONTHS__</details></section>
-<p class="foot">Simulated results. Fills are modelled at the next bar's open with slippage and
-commission; real trading will differ. Past performance does not predict future returns.</p>
+__BODY__
+<p class="foot">__FOOT__</p>
 </main>
 <script>
 document.querySelectorAll('script[data-for]').forEach(function (tag) {
@@ -270,8 +285,8 @@ document.querySelectorAll('script[data-for]').forEach(function (tag) {
   var svg = box.querySelector('svg'), tip = box.querySelector('.tip'), xh = svg.querySelector('.xh');
   var g = d.geom, n = d.dates.length, cur = n - 1;
   function fmt(v) {
-    return d.kind === 'pct' ? (v * 100).toFixed(2) + '%'
-      : v.toLocaleString(undefined, {maximumFractionDigits: 0});
+    if (d.kind === 'money') return v.toLocaleString(undefined, {maximumFractionDigits: 0});
+    return (d.kind === 'signed' && v > 0 ? '+' : '') + (v * 100).toFixed(2) + '%';
   }
   function show(i) {
     cur = Math.max(0, Math.min(n - 1, i));

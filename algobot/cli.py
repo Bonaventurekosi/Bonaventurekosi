@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Any, Mapping
 
 import pandas as pd
@@ -16,6 +17,10 @@ from .backtest.report import write_report
 from .config import (_section, build_costs, build_pipeline, load_config, load_dataset,
                      run_backtest)
 from .data import Dataset, infer_periods_per_year, load_data, make_provider
+from .data.event_sources import make_event_source
+from .eventreport import write_event_report
+from .events import EventStore
+from .eventstudy import format_summary, run_event_study
 from .execution.brokers import AlpacaBroker, Broker, CCXTBroker, PaperBroker
 from .history import BarHistory
 from .live import LiveRunner, ReplayProvider, feed
@@ -193,6 +198,75 @@ def cmd_plan(args) -> int:
     return 0
 
 
+_EVENT_KEYS = {"path", "sources", "start", "benchmark", "kind", "pre", "post", "threshold",
+               "symbols"}
+
+
+def _event_settings(cfg: Mapping[str, Any]) -> dict[str, Any]:
+    ev = dict(cfg.get("events") or {})
+    unknown = set(ev) - _EVENT_KEYS
+    if unknown:
+        raise SystemExit(f"events: unknown option(s) {sorted(unknown)}; valid: {sorted(_EVENT_KEYS)}")
+    if not ev.get("path"):
+        raise SystemExit("config needs events.path, the CSV file where events are kept")
+    if not ev.get("symbols"):
+        ev["symbols"] = [s for s in _symbols(cfg) if s != ev.get("benchmark")]
+    return ev
+
+
+def cmd_events_fetch(args) -> int:
+    """Collect events from the configured sources into the events file."""
+    cfg = load_config(args.config)
+    ev = _event_settings(cfg)
+    sources = args.source or ev.get("sources") or ["sec"]
+    path = Path(ev["path"])
+    store = EventStore.from_csv(path) if path.exists() else EventStore()
+    before = len(store)
+    for name in sources:
+        fresh = make_event_source(name).fetch(ev["symbols"], start=ev.get("start"))
+        store = store.merge(fresh)
+        print(f"{name}: {len(fresh):,} events for {len(ev['symbols'])} symbols")
+    store.to_csv(path)
+    print(f"{path}: {len(store):,} events ({len(store) - before:+,} new)")
+    for kind, count in store.counts().items():
+        print(f"  {kind:<26}{count:>7,}")
+    return 0
+
+
+def cmd_events_study(args) -> int:
+    """Measure how prices moved around the collected events."""
+    cfg = load_config(args.config)
+    ev = _event_settings(cfg)
+    store = EventStore.from_csv(ev["path"])
+    dataset = load_dataset(cfg)
+    study = run_event_study(store, dataset, benchmark=ev.get("benchmark"),
+                            pre=int(ev.get("pre", 10)), post=int(ev.get("post", 60)))
+    if not len(study):
+        raise SystemExit("no events fall inside the price data")
+    kind = args.kind or ev.get("kind", "earnings")
+    threshold = float(ev.get("threshold", 0.02))
+    kinds = study.by_kind()
+    print(f"{len(study):,} events, {study.events['symbol'].nunique()} symbols, "
+          f"{study.events['session'].min().date()} to {study.events['session'].max().date()}; "
+          f"market = {study.benchmark}; ordinary day move {study.normal_abs_move * 100:.2f}%")
+    print("\nBy event type (average return versus the market, t-statistic in brackets):")
+    order = kinds.value_counts().index
+    print(format_summary(study.summary(pd.Series(pd.Categorical(kinds, order, ordered=True)))))
+    if (kinds == kind).any():
+        focus = study.subset((kinds == kind).to_numpy())
+        print(f"\n{kind}, split by the move on the event day:")
+        print(format_summary(focus.summary(focus.by_reaction(threshold))))
+        valued = focus.subset(~focus.events["value"].isna().to_numpy())
+        if len(valued) >= 20:
+            print(f"\n{kind}, split by the reported surprise:")
+            print(format_summary(valued.summary(valued.by_value())))
+    if args.report:
+        out = write_event_report(study, args.report, str(cfg.get("name", "Event study")),
+                                 kind, threshold)
+        print(f"\nreport written to {out}", file=sys.stderr)
+    return 0
+
+
 def _build_broker(live: Mapping[str, Any], symbols: list[str], cfg: Mapping[str, Any]) -> Broker:
     kind = live.get("broker", "paper")
     paper = bool(live.get("paper", True))
@@ -299,6 +373,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cash", type=float)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_plan)
+
+    p = sub.add_parser("events", help="collect earnings/filing/news events and study their effect")
+    actions = p.add_subparsers(dest="action", required=True)
+    a = actions.add_parser("fetch", help="collect events into the file named by events.path")
+    a.add_argument("-c", "--config", required=True)
+    a.add_argument("--source", action="append", choices=["sec", "yahoo_news", "alpaca_news"],
+                   help="override events.sources (repeatable)")
+    a.set_defaults(func=cmd_events_fetch)
+    a = actions.add_parser("study", help="measure how prices moved around the events")
+    a.add_argument("-c", "--config", required=True)
+    a.add_argument("--kind", help="event type to focus on (default: events.kind or earnings)")
+    a.add_argument("--report", metavar="PATH", help="also write an HTML report")
+    a.set_defaults(func=cmd_events_study)
 
     p = sub.add_parser("run", help="trade: paper by default, real money only with --live")
     p.add_argument("-c", "--config", required=True)

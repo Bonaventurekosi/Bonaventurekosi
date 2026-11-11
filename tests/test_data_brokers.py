@@ -81,11 +81,12 @@ def test_synthetic_is_seeded_and_structured():
 
 # -- network providers, against recorded-shape payloads --------------------------
 class FakeResponse:
-    def __init__(self, payload):
-        self.payload, self.content = payload, b"x"
+    def __init__(self, payload, status_code=200):
+        self.payload, self.content, self.status_code = payload, b"x", status_code
 
     def raise_for_status(self):
-        pass
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
 
     def json(self):
         return self.payload
@@ -97,7 +98,8 @@ class FakeSession:
 
     def get(self, url, **kw):
         self.calls.append(("GET", url, kw))
-        return FakeResponse(self.payloads.pop(0))
+        item = self.payloads.pop(0)
+        return item if isinstance(item, FakeResponse) else FakeResponse(item)
 
     def request(self, method, url, **kw):
         self.calls.append((method, url, kw))
@@ -114,7 +116,7 @@ YAHOO = {"chart": {"error": None, "result": [{
 
 def test_yahoo_parse_and_fetch():
     session = FakeSession(YAHOO)
-    out = YahooData(session=session).fetch(["SPY"])
+    out = YahooData(session=session, pause=0).fetch(["SPY"])
     df = out["SPY"]
     assert list(df.index) == list(pd.to_datetime(["2024-01-02", "2024-01-03"]))   # null bar dropped
     assert df["close"].tolist() == [51.0, 51.5] and df["open"].iloc[0] == pytest.approx(50.0)
@@ -124,6 +126,42 @@ def test_yahoo_parse_and_fetch():
         YahooData.parse({"chart": {"error": {"code": "Not Found"}, "result": None}})
     intraday = YahooData.parse(YAHOO, daily=False)
     assert intraday.index[0] == pd.Timestamp("2024-01-02 14:30")
+
+
+def test_yahoo_retries_when_throttled():
+    throttled = FakeSession(FakeResponse({}, 429), FakeResponse({}, 503), YAHOO)
+    out = YahooData(session=throttled, pause=0).fetch(["SPY"])
+    assert len(out["SPY"]) == 2 and len(throttled.calls) == 3
+    gives_up = FakeSession(*[FakeResponse({}, 429)] * 3)
+    with pytest.raises(RuntimeError, match="429"):
+        YahooData(session=gives_up, pause=0, retries=2).fetch(["SPY"])
+    assert len(gives_up.calls) == 3
+
+
+def test_download_cache(tmp_path, monkeypatch):
+    import algobot.data as data
+    calls = []
+
+    class Provider:
+        def fetch(self, symbols, bars=None):
+            calls.append(list(symbols))
+            idx = pd.date_range("2024-01-02", periods=3, freq="B")
+            return {s: clean_frame(pd.DataFrame({"close": [1.0, 2.0, 3.0 + len(calls)]}, index=idx))
+                    for s in symbols}
+
+    monkeypatch.setattr(data, "make_provider", lambda spec: Provider())
+    spec = {"source": "yahoo", "symbols": ["A", "B/USD"], "cache": str(tmp_path / "c")}
+    first = load_data(spec)
+    again = load_data(spec)                                   # served from disk
+    assert calls == [["A", "B/USD"]] and again["A"].equals(first["A"])
+    load_data({**spec, "symbols": ["A", "C"]})                # only the missing symbol is fetched
+    assert calls[-1] == ["C"]
+    load_data({**spec, "cache_hours": 0})                     # stale: everything refreshed
+    assert calls[-1] == ["A", "B/USD"]
+    load_data({**spec, "interval": "1h"})                     # different settings, separate cache
+    assert calls[-1] == ["A", "B/USD"] and len(list((tmp_path / "c").iterdir())) == 2
+    load_data({"source": "yahoo", "symbols": ["A"]})          # no cache configured: always fetch
+    assert calls[-1] == ["A"] and len(calls) == 5
 
 
 def test_alpaca_data_paginates_and_routes_crypto():
