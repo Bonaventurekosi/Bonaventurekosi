@@ -152,8 +152,12 @@ def make_plan(cfg: Mapping[str, Any], cash: float | None = None,
         cash = float((cfg.get("backtest") or {}).get("initial_cash", 100_000.0))
     equity = float(cash) + sum(p.qty * prices[s] for s, p in held.items())
     decision = pipeline.step(history, equity=equity, positions=held, prices=prices)
+    stamp = pd.Timestamp(history.now)
+    today = pd.Timestamp.now(tz="America/New_York").tz_localize(None).normalize()
     return {
         "as_of": str(history.now), "equity": round(equity, 2), "cash": round(float(cash), 2),
+        # A daily bar dated today may still be forming: prices and targets can move before the close.
+        "bar_may_be_forming": bool(stamp == stamp.normalize() and stamp >= today),
         "targets": {s: round(w, 4) for s, w in decision.targets.items() if abs(w) > 1e-9},
         "orders": [{"symbol": o.symbol, "side": "buy" if o.qty > 0 else "sell",
                     "qty": round(abs(o.qty), 6), "est_value": round(abs(o.qty) * prices[o.symbol], 2),

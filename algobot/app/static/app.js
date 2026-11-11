@@ -312,6 +312,9 @@ function today(setup, o) {
         h('button', { class: 'btn primary', text: 'Show today’s orders', disabled: busy('plan'), onclick: submit }))),
     slotView('plan', r => h('div', { class: 'card' },
       h('h2', { text: 'As of ' + r.as_of.slice(0, 10) + ' · account value ' + money(r.equity) }),
+      r.bar_may_be_forming ? h('div', { class: 'notice info', text: 'This uses today’s prices, and today’s bar '
+        + 'may not have closed yet. Prices and targets can still change before the close; '
+        + 'run it again after the market closes for the final answer.' }) : null,
       r.orders.length ? table(['Action', 'Symbol', 'Quantity', 'About', 'At price'],
         r.orders.map(x => [x.side === 'buy' ? 'Buy' : 'Sell', x.symbol, qty(x.qty), money(x.est_value), money(x.ref_price)]),
         { left: 2 })

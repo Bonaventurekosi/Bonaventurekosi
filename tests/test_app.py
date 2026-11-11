@@ -128,6 +128,7 @@ def test_other_jobs(app):
     price = synthetic_universe(["AA", "BB", "CC"], bars=400, seed=2, kind="range")["AA"]["close"].iloc[-1]
     assert plan["equity"] == pytest.approx(5000 + 10 * price, abs=0.01)
     assert all(o["side"] in ("buy", "sell") and o["est_value"] > 0 for o in plan["orders"])
+    assert plan["bar_may_be_forming"] is False                               # the data ends years ago
     replay = finish(app, app.submit("rehearse", "demo", {"bars": 25})).result
     assert replay["bars"] == 25 and len(replay["curve"]) == 26 and replay["start_cash"] == 20000
     assert replay["equity"] == pytest.approx(replay["curve"][-1][1])
