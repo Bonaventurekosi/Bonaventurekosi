@@ -1,0 +1,27 @@
+# Your own data: put one CSV per symbol in ./data (date, open, high, low, close, volume).
+#   python -m algobot backtest -c configs/csv_pairs.yaml
+name: Pairs trading on CSV data
+
+data:
+  source: csv
+  path: data
+  symbols: [KO, PEP]
+
+strategy:
+  type: pairs
+  params:
+    pairs: [[KO, PEP]]
+    window: 60
+    entry_z: 2.0
+    exit_z: 0.5
+    stop_z: 4.0
+
+risk:
+  max_gross_leverage: 1.0
+
+backtest:
+  borrow_rate: 0.01               # annual cost of holding the short leg
+
+costs:
+  commission_bps: 1
+  slippage_bps: 2

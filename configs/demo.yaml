@@ -1,0 +1,50 @@
+# Runs anywhere with no data vendor or account: `python -m algobot backtest -c configs/demo.yaml`
+name: Demo - regime-aware ensemble on synthetic markets
+
+data:
+  source: synthetic          # seeded fake markets; swap for csv / yahoo / alpaca / ccxt
+  symbols: [ALFA, BRAVO, CHARLIE, DELTA, ECHO, FOXTROT]
+  bars: 2520                 # about ten years of daily bars
+  seed: 7
+  pairs: [[ALFA, FOXTROT]]   # FOXTROT is generated cointegrated with ALFA
+
+strategy:
+  type: ensemble
+  params:
+    method: adaptive         # shift capital toward children that have been working
+    lookback: 63
+    children:
+      - {type: donchian, weight: 1, regime: trend, params: {entry: 40, exit: 15}}
+      - {type: tsmom, weight: 1, regime: trend}
+      - {type: bollinger, weight: 1, regime: range, params: {window: 20, entry_z: 2.0}}
+      - {type: grid, weight: 1, regime: range, params: {anchor_window: 100, mode: neutral}}
+      - {type: pairs, weight: 1, params: {pairs: [[FOXTROT, ALFA]]}}
+
+sizing:
+  target_vol: 0.10           # aim for 10% annualised portfolio volatility
+  max_leverage: 1.0          # never more than 100% invested (gross)
+
+risk:
+  max_position_weight: 0.35
+  trailing_stop_pct: 0.12
+  max_drawdown_pct: 0.20     # flatten everything 20% below the equity peak
+  drawdown_halt_bars: 60     # then sit out for 60 bars
+
+costs:
+  commission_bps: 1
+  slippage_bps: 2
+
+backtest:
+  initial_cash: 100000
+
+optimize:
+  metric: sharpe
+  min_trades: 20
+  space:
+    strategy.params.children.0.params.entry: [20, 40, 60]
+    strategy.params.children.2.params.entry_z: [1.5, 2.0, 2.5]
+    risk.trailing_stop_pct: [0.08, 0.12]
+
+walk_forward:
+  train_bars: 756
+  test_bars: 252

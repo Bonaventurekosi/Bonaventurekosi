@@ -1,0 +1,46 @@
+# Diversified ETF trend following on free Yahoo Finance daily data.
+#   python -m algobot backtest -c configs/etf_trend_yahoo.yaml --report reports/etf.html
+#   python -m algobot plan     -c configs/etf_trend_yahoo.yaml --positions my_positions.json
+name: ETF trend + dual momentum (long only)
+
+data:
+  source: yahoo
+  symbols: [SPY, QQQ, IWM, EFA, EEM, TLT, IEF, GLD, DBC, VNQ]
+  range: 15y
+  interval: 1d
+
+strategy:
+  type: ensemble
+  params:
+    children:
+      - {type: tsmom, weight: 2, params: {allow_short: false}}
+      - {type: dual_momentum, weight: 1, params: {top_k: 3, safe_asset: IEF}}
+      - {type: inverse_vol, weight: 1}
+
+sizing:
+  target_vol: 0.10
+  max_leverage: 1.0
+
+risk:
+  long_only: true
+  max_position_weight: 0.30
+  max_drawdown_pct: 0.20
+  drawdown_halt_bars: 40
+
+execution:
+  fractional: true
+  min_trade_weight: 0.01
+
+costs:
+  commission_bps: 0
+  slippage_bps: 3
+
+optimize:
+  metric: sharpe
+  space:
+    strategy.params.children.1.params.lookback: [63, 126, 189, 252]
+    strategy.params.children.1.params.top_k: [2, 3, 4]
+
+walk_forward:
+  train_bars: 1260
+  test_bars: 252

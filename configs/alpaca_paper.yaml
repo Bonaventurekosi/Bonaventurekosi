@@ -1,0 +1,46 @@
+# Paper trading through Alpaca (no real money). Needs a free Alpaca account:
+#   export ALPACA_API_KEY=...  ALPACA_API_SECRET=...
+#   python -m algobot run -c configs/alpaca_paper.yaml --dry-run --once   # look first
+#   python -m algobot run -c configs/alpaca_paper.yaml                    # then let it run
+name: Alpaca paper - breakout plus dip buying
+
+data:
+  source: alpaca
+  symbols: [SPY, QQQ, IWM, TLT, GLD]
+  timeframe: 1Day
+  lookback_days: 1500
+
+strategy:
+  type: ensemble
+  params:
+    method: inverse_vol
+    children:
+      - {type: donchian, params: {entry: 55, exit: 20, allow_short: false}}
+      - {type: rsi_reversion, params: {allow_short: false}}
+
+sizing:
+  target_vol: 0.12
+  max_leverage: 1.0
+
+risk:
+  long_only: true
+  max_position_weight: 0.40
+  trailing_stop_pct: 0.10
+  max_drawdown_pct: 0.15          # stays flat until you run with --reset-halt
+  daily_loss_limit_pct: 0.03
+
+execution:
+  min_trade_weight: 0.02
+
+costs:
+  commission_bps: 0
+  slippage_bps: 3
+
+live:
+  broker: alpaca
+  paper: true                     # false = real money, and then --live is also required
+  bar_seconds: 86400              # ignore the daily bar until it is complete
+  poll_seconds: 900
+  history_bars: 400
+  state_path: state/alpaca_paper.json
+  max_order_value: 25000

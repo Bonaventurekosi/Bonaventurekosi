@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "algobot"
+version = "0.1.0"
+description = "Multi-strategy algorithmic trading framework: backtest, optimise, paper trade, go live."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "PyYAML>=6.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+crypto = ["ccxt>=4.0"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+algobot = "algobot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["algobot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

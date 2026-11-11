@@ -1,0 +1,44 @@
+# Spot crypto through any CCXT exchange (pip install ccxt). Long only.
+#   python -m algobot backtest -c configs/crypto_ccxt.yaml
+#   export CCXT_API_KEY=...  CCXT_API_SECRET=...     # sandbox/testnet keys
+#   python -m algobot run -c configs/crypto_ccxt.yaml --dry-run --once
+name: Crypto - grid in ranges, breakout in trends
+
+data:
+  source: ccxt
+  exchange: binance
+  symbols: [BTC/USDT, ETH/USDT, SOL/USDT]
+  timeframe: 4h
+  limit: 1000
+
+strategy:
+  type: ensemble
+  params:
+    children:
+      - {type: grid, regime: range, params: {step_pct: 0.03, levels: 4, anchor_window: 120}}
+      - {type: keltner_breakout, regime: trend, params: {allow_short: false}}
+      - {type: dca, weight: 0.5, params: {every: 42, increment: 0.03, max_weight: 0.3}}
+
+sizing:
+  target_vol: 0.30
+  max_leverage: 1.0
+  periods_per_year: 2190          # 4-hour bars, around the clock
+
+risk:
+  long_only: true
+  max_position_weight: 0.5
+  max_drawdown_pct: 0.25
+  drawdown_halt_bars: 180
+
+costs:
+  commission_bps: 10
+  slippage_bps: 5
+
+live:
+  broker: ccxt
+  exchange: binance
+  paper: true                     # exchange sandbox; false = real money (needs --live)
+  bar_seconds: 14400
+  poll_seconds: 300
+  state_path: state/crypto.json
+  max_order_value: 2000
