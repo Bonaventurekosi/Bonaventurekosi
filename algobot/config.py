@@ -64,6 +64,19 @@ def build_costs(cfg: Mapping[str, Any]) -> CostModel:
     return _section(CostModel, cfg.get("costs"), "costs")
 
 
+def check_config(cfg: Mapping[str, Any]) -> None:
+    """Raise ValueError if anything in the config is malformed, without loading
+    any data: sections, option names, strategy names and parameters."""
+    from .data import _check
+    validate(cfg)
+    build_pipeline(cfg)
+    build_costs(cfg)
+    _section(BacktestConfig, cfg.get("backtest"), "backtest")
+    if not isinstance(cfg.get("data") or {}, Mapping):
+        raise ValueError("data must be a mapping")
+    _check(cfg.get("data") or {})
+
+
 def load_dataset(cfg: Mapping[str, Any]) -> Dataset:
     return Dataset(load_data(cfg.get("data") or {}))
 

@@ -319,7 +319,7 @@ def test_events_study_command(event_cfg, capsys):
 
 def test_events_fetch_command(event_cfg, capsys, monkeypatch):
     path, cfg, tmp = event_cfg
-    import algobot.cli as cli
+    import algobot.tasks as tasks
     seen = {}
 
     class Source:
@@ -327,7 +327,7 @@ def test_events_fetch_command(event_cfg, capsys, monkeypatch):
             seen["symbols"] = list(symbols)
             return EventStore(EVENT_ROWS[:2] + [{"symbol": "AAA", "time": "2021-03-01 09:00", "kind": "news"}])
 
-    monkeypatch.setattr(cli, "make_event_source", lambda name: Source())
+    monkeypatch.setattr(tasks, "make_event_source", lambda name: Source())
     assert main(["events", "fetch", "-c", path]) == 0
     out = capsys.readouterr().out
     assert seen["symbols"] == ["AAA", "BBB", "CCC"]                         # the benchmark is not fetched

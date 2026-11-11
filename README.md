@@ -23,9 +23,43 @@ python -m algobot walkforward -c configs/demo.yaml     # honest out-of-sample te
 python -m algobot run -c configs/demo.yaml --replay 60 # rehearse the live loop
 ```
 
+Or use it from your browser:
+
+```bash
+python -m algobot app          # opens http://127.0.0.1:8765
+```
+
 `configs/demo.yaml` runs on built-in synthetic markets, so it needs no data
 vendor, account or network. The synthetic data exists to exercise the machinery;
 its results say nothing about real markets.
+
+## The app
+
+`python -m algobot app` starts a small web app on your own computer and opens
+it in the browser. Each file in `configs/` appears as a setup, and for each one
+you can:
+
+| Tab | What it does |
+|---|---|
+| Overview | Explains the setup in plain words: what it trades, how it decides, its safety limits |
+| Backtest | Runs the backtest and shows the full report; an out-of-sample test where the setup defines one |
+| Compare strategies | Ranks every built-in strategy on the setup's symbols against simply holding them |
+| Today's orders | You enter cash and holdings; it lists the trades that reach the strategy's target |
+| News & earnings | Collects events and runs the event study (setups with an `events` section) |
+| Paper trading | Rehearses the live loop on recent bars, or paper trades live prices in the background |
+| Edit | Change the setup's file with validation before saving, or save it as a copy |
+
+Things worth knowing:
+
+- **It cannot place a real order.** The app only researches and paper trades.
+  Real-money trading exists only on the command line, behind `--live`.
+- **Live paper trading runs while the app runs.** It checks for a new completed
+  bar every few minutes, trades a simulated account, and saves its state under
+  `state/`, so restarting the app continues where it stopped.
+- **It listens on your computer only** (127.0.0.1) and refuses requests that do
+  not come from its own page, so other websites cannot drive it. `--host` and
+  `--no-host-check` loosen that; use them only behind a proxy you trust.
+- It needs nothing beyond the bot's own dependencies: no Node, no build step.
 
 ## How it works
 
@@ -108,6 +142,7 @@ backtests and live.
 | `events fetch -c CFG` | Collect earnings, filing and news events into a file |
 | `events study -c CFG [--report out.html]` | Measure how prices moved around those events |
 | `run -c CFG [--once] [--dry-run] [--replay N] [--live]` | Trade on a live feed (paper unless told otherwise) |
+| `app [--port N] [--configs DIR]` | Open the browser app |
 
 Any value in a config can be searched by its dotted path, including ensemble
 children: `strategy.params.children.0.params.entry: [20, 40, 60]`.
@@ -287,6 +322,8 @@ algobot/
   events.py      timestamped events and the rule for when they can be acted on
   eventstudy.py  price reaction and drift around events; eventreport.py renders it
   live.py        polling runner with restart-safe state
+  tasks.py       operations shared by the command line and the app
+  app/           the browser app: JSON API, background paper trading, front end
   cli.py
 configs/         example configurations
 tests/           the test suite

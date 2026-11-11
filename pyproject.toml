@@ -25,5 +25,8 @@ algobot = "algobot.cli:main"
 [tool.setuptools.packages.find]
 include = ["algobot*"]
 
+[tool.setuptools.package-data]
+algobot = ["app/static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

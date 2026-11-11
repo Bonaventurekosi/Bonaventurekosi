@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>algobot</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="side" aria-label="Setups">
+    <div class="brand">algobot</div>
+    <div class="side-label">Setups</div>
+    <nav id="setups" class="setups"></nav>
+    <form id="new-form" class="new-form" hidden>
+      <label for="new-name">Name for the new setup</label>
+      <input id="new-name" autocomplete="off" maxlength="40" placeholder="my-setup">
+      <div class="row">
+        <button type="submit" class="btn primary small">Create</button>
+        <button type="button" class="btn small" id="new-cancel">Cancel</button>
+      </div>
+      <p class="form-error" id="new-error" hidden></p>
+    </form>
+    <button class="btn small" id="new-setup">New setup</button>
+    <p class="side-note">Paper trading only. Nothing in this app can place a real order.</p>
+  </aside>
+  <main id="main">
+    <p class="muted">Loading…</p>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

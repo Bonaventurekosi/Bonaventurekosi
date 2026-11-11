@@ -6,26 +6,22 @@ import json
 import logging
 import os
 import sys
-from pathlib import Path
 from typing import Any, Mapping
 
 import pandas as pd
 
+from . import tasks
 from .backtest.metrics import bootstrap_sharpe, format_value
 from .backtest.optimize import optimize, walk_forward
 from .backtest.report import write_report
-from .config import (_section, build_costs, build_pipeline, load_config, load_dataset,
+from .config import (build_costs, build_pipeline, load_config, load_dataset,
                      run_backtest)
-from .data import Dataset, infer_periods_per_year, load_data, make_provider
-from .data.event_sources import make_event_source
+from .data import make_provider
 from .eventreport import write_event_report
-from .events import EventStore
-from .eventstudy import format_summary, run_event_study
+from .eventstudy import format_summary
 from .execution.brokers import AlpacaBroker, Broker, CCXTBroker, PaperBroker
-from .history import BarHistory
-from .live import LiveRunner, ReplayProvider, feed
+from .live import LiveRunner
 from .strategies import available
-from .types import Position
 
 _LIVE_KEYS = {"broker", "cash", "paper", "exchange", "history_bars", "refresh_bars",
               "bar_seconds", "poll_seconds", "state_path", "max_order_value",
@@ -33,10 +29,10 @@ _LIVE_KEYS = {"broker", "cash", "paper", "exchange", "history_bars", "refresh_ba
 
 
 def _symbols(cfg: Mapping[str, Any]) -> list[str]:
-    symbols = (cfg.get("data") or {}).get("symbols")
-    if not symbols:
-        raise SystemExit("this command needs data.symbols in the config")
-    return list(symbols)
+    try:
+        return tasks.symbols_of(cfg)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
 
 
 # -- commands ------------------------------------------------------------------
@@ -114,28 +110,11 @@ def cmd_walkforward(args) -> int:
 
 
 def cmd_tournament(args) -> int:
-    cfg = load_config(args.config)
-    dataset = load_dataset(cfg)
-    rows = []
-    for name in available():
-        if name == "ensemble":
-            continue
-        trial = {**cfg, "strategy": {"type": name}}
-        try:
-            m = run_backtest(trial, dataset).metrics
-        except ValueError as exc:
-            print(f"  skipped {name}: {exc}", file=sys.stderr)
-            continue
-        rows.append({"strategy": name, **{k: m.get(k, float("nan")) for k in
-                     ("total_return", "cagr", "sharpe", "max_drawdown", "trades")}})
-    bench = dataset.benchmark()
-    from .backtest.metrics import compute_metrics
-    bm = compute_metrics(bench, periods_per_year=dataset.periods_per_year)
-    rows.append({"strategy": "(benchmark)", **{k: bm.get(k, float("nan")) for k in
-                 ("total_return", "cagr", "sharpe", "max_drawdown")}, "trades": 0})
-    rows.sort(key=lambda r: r["sharpe"], reverse=True)
+    result = tasks.tournament(load_config(args.config))
+    for skip in result["skipped"]:
+        print(f"  skipped {skip['strategy']}: {skip['reason']}", file=sys.stderr)
     print(f"  {'strategy':<18}{'return':>10}{'CAGR':>9}{'Sharpe':>8}{'max DD':>9}{'trades':>8}")
-    for r in rows:
+    for r in result["rows"]:
         print(f"  {r['strategy']:<18}{format_value(r['total_return'], 'pct'):>10}"
               f"{format_value(r['cagr'], 'pct'):>9}{r['sharpe']:>8.2f}"
               f"{format_value(r['max_drawdown'], 'pct'):>9}{int(r['trades']):>8}")
@@ -143,52 +122,24 @@ def cmd_tournament(args) -> int:
     return 0
 
 
-def _read_positions(path: str | None, default_cash: float) -> tuple[float, dict[str, Position]]:
-    if not path:
-        return default_cash, {}
-    with open(path) as fh:
-        raw = json.load(fh)
-    positions = {}
-    for sym, value in (raw.get("positions") or {}).items():
-        if isinstance(value, Mapping):
-            positions[sym] = Position(float(value["qty"]), float(value.get("avg_price", 0.0)))
-        else:
-            positions[sym] = Position(float(value), 0.0)
-    return float(raw.get("cash", default_cash)), positions
-
-
 def cmd_plan(args) -> int:
     """What the bot would do right now, without sending anything anywhere."""
     cfg = load_config(args.config)
-    frames = Dataset(load_data(cfg.get("data") or {})).frames
-    pipeline = build_pipeline(cfg)
-    if pipeline.sizer.config.periods_per_year is None:
-        longest = max(frames.values(), key=len)
-        pipeline.sizer.config.periods_per_year = infer_periods_per_year(longest.index)
-    history = BarHistory(frames.keys())
-    feed(pipeline, history, frames, hold_last=True)
-    prices = history.prices()
-    default_cash = float((cfg.get("backtest") or {}).get("initial_cash", 100_000.0))
-    cash, positions = _read_positions(args.positions, default_cash)
+    cash, positions = None, {}
+    if args.positions:
+        with open(args.positions) as fh:
+            raw = json.load(fh)
+        cash, positions = raw.get("cash"), raw.get("positions") or {}
     if args.cash is not None:
         cash = args.cash
-    missing = [s for s in positions if s not in prices]
-    if missing:
-        raise SystemExit(f"no price data for held symbol(s) {missing}; add them to data.symbols")
-    equity = cash + sum(p.qty * prices[s] for s, p in positions.items())
-    decision = pipeline.step(history, equity=equity, positions=positions, prices=prices)
-    plan = {
-        "as_of": str(history.now), "equity": round(equity, 2),
-        "targets": {s: round(w, 4) for s, w in decision.targets.items() if abs(w) > 1e-9},
-        "orders": [{"symbol": o.symbol, "side": "buy" if o.qty > 0 else "sell",
-                    "qty": round(abs(o.qty), 6), "est_value": round(abs(o.qty) * prices[o.symbol], 2),
-                    "ref_price": round(prices[o.symbol], 4), "reason": o.reason}
-                   for o in decision.orders],
-    }
+    try:
+        plan = tasks.make_plan(cfg, cash, positions)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
     if args.json:
         print(json.dumps(plan, indent=2))
         return 0
-    print(f"as of {plan['as_of']}  equity {equity:,.2f}")
+    print(f"as of {plan['as_of']}  equity {plan['equity']:,.2f}")
     print("target weights:", plan["targets"] or "all cash")
     if not plan["orders"]:
         print("no orders: the book is already where the strategy wants it")
@@ -198,37 +149,22 @@ def cmd_plan(args) -> int:
     return 0
 
 
-_EVENT_KEYS = {"path", "sources", "start", "benchmark", "kind", "pre", "post", "threshold",
-               "symbols"}
-
-
 def _event_settings(cfg: Mapping[str, Any]) -> dict[str, Any]:
-    ev = dict(cfg.get("events") or {})
-    unknown = set(ev) - _EVENT_KEYS
-    if unknown:
-        raise SystemExit(f"events: unknown option(s) {sorted(unknown)}; valid: {sorted(_EVENT_KEYS)}")
-    if not ev.get("path"):
-        raise SystemExit("config needs events.path, the CSV file where events are kept")
-    if not ev.get("symbols"):
-        ev["symbols"] = [s for s in _symbols(cfg) if s != ev.get("benchmark")]
-    return ev
+    try:
+        return tasks.event_settings(cfg)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
 
 
 def cmd_events_fetch(args) -> int:
     """Collect events from the configured sources into the events file."""
     cfg = load_config(args.config)
-    ev = _event_settings(cfg)
-    sources = args.source or ev.get("sources") or ["sec"]
-    path = Path(ev["path"])
-    store = EventStore.from_csv(path) if path.exists() else EventStore()
-    before = len(store)
-    for name in sources:
-        fresh = make_event_source(name).fetch(ev["symbols"], start=ev.get("start"))
-        store = store.merge(fresh)
-        print(f"{name}: {len(fresh):,} events for {len(ev['symbols'])} symbols")
-    store.to_csv(path)
-    print(f"{path}: {len(store):,} events ({len(store) - before:+,} new)")
-    for kind, count in store.counts().items():
+    _event_settings(cfg)
+    result = tasks.collect_events(cfg, args.source)
+    for item in result["fetched"]:
+        print(f"{item['source']}: {item['events']:,} events for {result['symbols']} symbols")
+    print(f"{result['path']}: {result['total']:,} events ({result['new']:+,} new)")
+    for kind, count in result["counts"].items():
         print(f"  {kind:<26}{count:>7,}")
     return 0
 
@@ -236,15 +172,12 @@ def cmd_events_fetch(args) -> int:
 def cmd_events_study(args) -> int:
     """Measure how prices moved around the collected events."""
     cfg = load_config(args.config)
-    ev = _event_settings(cfg)
-    store = EventStore.from_csv(ev["path"])
-    dataset = load_dataset(cfg)
-    study = run_event_study(store, dataset, benchmark=ev.get("benchmark"),
-                            pre=int(ev.get("pre", 10)), post=int(ev.get("post", 60)))
-    if not len(study):
-        raise SystemExit("no events fall inside the price data")
-    kind = args.kind or ev.get("kind", "earnings")
-    threshold = float(ev.get("threshold", 0.02))
+    _event_settings(cfg)
+    try:
+        study, opts = tasks.study_events(cfg, args.kind)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    kind, threshold = opts["kind"], opts["threshold"]
     kinds = study.by_kind()
     print(f"{len(study):,} events, {study.events['symbol'].nunique()} symbols, "
           f"{study.events['session'].min().date()} to {study.events['session'].max().date()}; "
@@ -301,18 +234,10 @@ def cmd_run(args) -> int:
                   dry_run=args.dry_run, max_order_value=live.get("max_order_value"))
 
     if args.replay:
-        frames = Dataset(load_data(cfg["data"])).frames
-        total = len(Dataset(frames, clean=False).timeline)
-        provider = ReplayProvider(frames, start=max(1, total - args.replay))
-        broker = PaperBroker(float(live.get("cash", 100_000.0)), build_costs(cfg))
-        runner = LiveRunner(pipeline, provider, broker, symbols, **common)
-        runner.tick()
-        while provider.advance():
-            runner.tick()
-        acct = broker.account()
-        print(f"replayed {args.replay} bars on the paper broker: equity {acct.equity:,.2f}, "
-              f"cash {acct.cash:,.2f}, positions "
-              f"{ {s: round(p.qty, 4) for s, p in broker.positions().items()} }")
+        result = tasks.rehearse(cfg, args.replay)
+        print(f"replayed {result['bars']} bars on the paper broker: equity {result['equity']:,.2f}, "
+              f"cash {result['cash']:,.2f}, positions "
+              f"{ {s: round(q, 4) for s, q in result['positions'].items()} }")
         return 0
 
     source = (cfg.get("data") or {}).get("source", "synthetic")
@@ -334,6 +259,14 @@ def cmd_run(args) -> int:
         runner.tick()
     else:
         runner.run(max_ticks=args.max_ticks)
+    return 0
+
+
+def cmd_app(args) -> int:
+    """Open the browser app."""
+    from .app import serve
+    serve(args.configs, args.state, args.host, args.port, open_browser=not args.no_browser,
+          check_host=not args.no_host_check)
     return 0
 
 
@@ -373,6 +306,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cash", type=float)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_plan)
+
+    p = sub.add_parser("app", help="open the browser app (research and paper trading only)")
+    p.add_argument("--configs", default="configs", help="folder of setups (default: configs)")
+    p.add_argument("--state", default="state", help="folder for paper-trading state")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--host", default="127.0.0.1",
+                   help="address to listen on; the default is this computer only")
+    p.add_argument("--no-browser", action="store_true", help="do not open a browser window")
+    p.add_argument("--no-host-check", action="store_true",
+                   help="accept requests addressed to any host name (only behind a proxy you trust)")
+    p.set_defaults(func=cmd_app)
 
     p = sub.add_parser("events", help="collect earnings/filing/news events and study their effect")
     actions = p.add_subparsers(dest="action", required=True)

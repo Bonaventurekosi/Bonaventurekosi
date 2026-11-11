@@ -1,4 +1,5 @@
-# Runs anywhere with no data vendor or account: `python -m algobot backtest -c configs/demo.yaml`
+# A demonstration on simulated markets: needs no data provider, account or internet.
+#   python -m algobot backtest -c configs/demo.yaml
 name: Demo - regime-aware ensemble on synthetic markets
 
 data:

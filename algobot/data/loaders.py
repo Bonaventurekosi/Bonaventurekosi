@@ -77,18 +77,26 @@ class YahooData:
 
     def fetch(self, symbols: Sequence[str], bars: int | None = None) -> dict[str, pd.DataFrame]:
         out = {}
+        span = self._span(bars)
         for sym in symbols:
-            resp = self._get(sym)
+            resp = self._get(sym, span)
             df = self.parse(resp.json(), daily=not self.interval.endswith(("m", "h")))
             out[sym] = df.iloc[-bars:] if bars else df
         return out
 
-    def _get(self, sym: str):
+    def _span(self, bars: int | None) -> str:
+        """Ask for less history when only the latest few daily bars are wanted
+        (a live bot polling for new bars), instead of years every time."""
+        if not bars or self.interval != "1d":
+            return self.range
+        return "3mo" if bars <= 40 else "1y" if bars <= 200 else "5y" if bars <= 1000 else self.range
+
+    def _get(self, sym: str, span: str | None = None):
         """One chart request; backs off and retries when Yahoo throttles or hiccups."""
         for attempt in range(self.retries + 1):
             resp = self._http().get(
                 self.URL.format(symbol=sym),
-                params={"interval": self.interval, "range": self.range,
+                params={"interval": self.interval, "range": span or self.range,
                         "includeAdjustedClose": "true"},
                 timeout=self.timeout)
             if resp.status_code not in (429, 500, 502, 503, 504) or attempt == self.retries:

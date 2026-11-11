@@ -128,6 +128,18 @@ def test_yahoo_parse_and_fetch():
     assert intraday.index[0] == pd.Timestamp("2024-01-02 14:30")
 
 
+def test_yahoo_asks_for_less_history_when_polling():
+    session = FakeSession(YAHOO, YAHOO, YAHOO)
+    yahoo = YahooData(session=session, pause=0, range="15y")
+    yahoo.fetch(["SPY"])
+    yahoo.fetch(["SPY"], 30)
+    yahoo.fetch(["SPY"], 500)
+    assert [c[2]["params"]["range"] for c in session.calls] == ["15y", "3mo", "5y"]
+    hourly = YahooData(session=FakeSession(YAHOO), pause=0, range="60d", interval="1h")
+    hourly.fetch(["SPY"], 30)
+    assert hourly._session.calls[0][2]["params"]["range"] == "60d"     # only shortened for daily bars
+
+
 def test_yahoo_retries_when_throttled():
     throttled = FakeSession(FakeResponse({}, 429), FakeResponse({}, 503), YAHOO)
     out = YahooData(session=throttled, pause=0).fetch(["SPY"])
